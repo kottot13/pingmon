@@ -108,6 +108,54 @@ def distribution_strip(samples, width: int = 24) -> Text:
     return out
 
 
+def latency_chart(samples, width: int = 46, height: int = 6) -> Text:
+    """Multi-row latency bar chart with absolute colour thresholds.
+
+    Bar height encodes latency relative to the window's peak (so the shape is
+    always readable), while each bar's colour is the absolute latency grade
+    (green < 40ms, lime < 90, yellow < 180, orange < 350, red above). Dropped
+    packets render as a red ``╳`` at the baseline.
+    """
+    data = list(samples)[-width:]
+    ok = [s for s in data if s is not None]
+    if not ok:
+        blank = " " * max(1, len(data))
+        return Text("\n".join(blank for _ in range(height)), style="#2a2a38")
+
+    scale = max(ok) or 1.0
+    blocks = " ▁▂▃▄▅▆▇█"
+    columns: list[tuple[list[str], str]] = []
+    for s in data:
+        if s is None:
+            chars = [" "] * height
+            chars[-1] = "╳"
+            columns.append((chars, "bold #ff3860"))
+            continue
+        total = min(1.0, s / scale) * height
+        cells = []
+        for r in range(height):  # r = 0 is the bottom row
+            level = total - r
+            if level >= 1:
+                cells.append("█")
+            elif level <= 0:
+                cells.append(" ")
+            else:
+                cells.append(blocks[max(1, int(level * 8))])
+        columns.append((list(reversed(cells)), latency_color(s)))
+
+    out = Text()
+    for r in range(height):
+        for chars, style in columns:
+            ch = chars[r]
+            if ch == " ":
+                out.append(" ")
+            else:
+                out.append(ch, style=style)
+        if r != height - 1:
+            out.append("\n")
+    return out
+
+
 def loss_text(loss: float) -> Text:
     if loss <= 0:
         return Text("0%", style="#3ddc84")

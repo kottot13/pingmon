@@ -68,14 +68,6 @@ DataTable > .datatable--hover {
     margin: 0 0 1 0;
 }
 
-#detail-spark > .sparkline--max-color {
-    color: #7aa2f7;
-}
-
-#detail-spark > .sparkline--min-color {
-    color: #3ddc84;
-}
-
 #detail-quality {
     margin-bottom: 1;
 }

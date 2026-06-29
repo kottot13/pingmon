@@ -17,7 +17,6 @@ from textual.widgets import (
     Footer,
     Input,
     Label,
-    Sparkline,
     Static,
 )
 
@@ -27,6 +26,7 @@ from .pinger import resolve, tcp_ping
 from .render import (
     STATUS_META,
     distribution_strip,
+    latency_chart,
     latency_color,
     latency_text,
     loss_text,
@@ -388,7 +388,7 @@ class PingMonApp(App):
                 yield Static(id="detail-title")
                 yield Static(id="detail-meta")
                 yield Label("Latency · recent samples", classes="detail-h")
-                yield Sparkline([0], id="detail-spark", summary_function=max)
+                yield Static(id="detail-spark")
                 yield Static(id="detail-quality")
                 yield Label("Distribution · min — median — max", classes="detail-h")
                 yield Static(id="detail-dist")
@@ -628,9 +628,9 @@ class PingMonApp(App):
                 meta.append(net, style="#9a9ab0")
         self.query_one("#detail-meta", Static).update(meta)
 
-        spark = self.query_one("#detail-spark", Sparkline)
-        ok = st.ok_values
-        spark.data = ok[-60:] if ok else [0]
+        self.query_one("#detail-spark", Static).update(
+            latency_chart(st.samples, width=44, height=6)
+        )
 
         q = Text("quality  ", style="#7a7a8c")
         q.append_text(quality_bar(st.last, width=24))
