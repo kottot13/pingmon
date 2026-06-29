@@ -88,6 +88,17 @@ def flag_emoji(iso2: str | None) -> str:
     return chr(0x1F1E6 + ord(iso2[0]) - 65) + chr(0x1F1E6 + ord(iso2[1]) - 65)
 
 
+def iso_from_flag(flag: str) -> str:
+    """Inverse of `flag_emoji`: a regional-indicator flag -> ISO alpha-2 ('🇳🇱' -> 'NL').
+
+    Returns '' when `flag` is not exactly a pair of regional-indicator symbols
+    (e.g. the white-flag placeholder 🏳 or a plain string). Used to show a plain
+    two-letter country code, since most terminals can't render flag emoji.
+    """
+    letters = [chr(ord(c) - 0x1F1E6 + 65) for c in flag if 0x1F1E6 <= ord(c) <= 0x1F1FF]
+    return "".join(letters) if len(letters) == 2 else ""
+
+
 _GEO_FIELDS = "status,country,countryCode,regionName,city,isp,as,query"
 
 

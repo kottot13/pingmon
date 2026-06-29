@@ -54,6 +54,22 @@ class Target:
     def key(self) -> str:
         return f"{self.host}:{self.port}"
 
+    @property
+    def code(self) -> str:
+        """Two-letter display badge shown in place of the flag emoji.
+
+        Derived from the flag (which encodes the ISO alpha-2 code), falling back
+        to the first letters of the country name. Plain text renders reliably in
+        every terminal, unlike flag emoji.
+        """
+        from .netutil import iso_from_flag
+
+        iso = iso_from_flag(self.flag)
+        if iso:
+            return iso
+        letters = "".join(ch for ch in self.country if ch.isalpha())
+        return letters[:2].upper() or "??"
+
 
 @dataclass
 class Config:
@@ -69,18 +85,19 @@ class Config:
 
 
 def config_path() -> Path:
-    """Resolve the config file location, htop-style.
+    """Resolve the config file location.
 
-    Order: $PINGMON_CONFIG → a local ./config.toml if it already exists (handy
-    for development) → $XDG_CONFIG_HOME/pingmon/config.toml (the default for an
-    installed, run-from-anywhere command).
+    Order: $PINGMON_CONFIG (explicit override) → $XDG_CONFIG_HOME/pingmon/config.toml
+    (the default). The location is deliberately independent of the current working
+    directory: targets you add are always saved to — and reloaded from — the same
+    file, no matter where you launch pingmon from. (A previous build also picked up
+    a ./config.toml in the launch directory, which silently lost added targets when
+    you started pingmon from a different folder. Set $PINGMON_CONFIG for a custom
+    location during development.)
     """
     env = os.environ.get("PINGMON_CONFIG")
     if env:
         return Path(env).expanduser()
-    local = Path.cwd() / "config.toml"
-    if local.exists():
-        return local
     xdg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return xdg / "pingmon" / "config.toml"
 
@@ -160,4 +177,8 @@ def save_config(cfg: Config) -> None:
         lines.append(f'source = "{_toml_escape(t.source)}"')
         lines.append("")
 
-    path.write_text("\n".join(lines), encoding="utf-8")
+    # Write atomically: a crash or full disk mid-write can't truncate the existing
+    # config and lose the user's targets.
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text("\n".join(lines), encoding="utf-8")
+    os.replace(tmp, path)

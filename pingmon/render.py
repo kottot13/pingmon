@@ -20,6 +20,19 @@ STATUS_META = {
 }
 
 
+def country_label(code: str, country: str, *, accent: str = "#7aa2f7", name_style: str = "bold") -> Text:
+    """Render a country cell as ``CODE  Name``.
+
+    The two-letter ISO code stands in for the flag emoji, which most terminals
+    (iTerm2 among them) can't display — they fall back to two boxed letters.
+    """
+    t = Text()
+    t.append(f"{code:>2}", style=f"bold {accent}")
+    t.append("  ")
+    t.append(country, style=name_style)
+    return t
+
+
 def latency_color(ms: float | None) -> str:
     if ms is None:
         return "#ff3860"

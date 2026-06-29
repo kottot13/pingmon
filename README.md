@@ -16,10 +16,11 @@ average, jitter, packet loss, a status indicator, and an animated trend graph.
 - **★ Region Advisor** *(unique)* — ranks regions by a composite 0–100 score under a chosen **use-case profile** (VoIP / Gaming / Web / Bulk) and highlights the best region to pick right now. Press `g`. See [below](#region-advisor).
 - **MOS / R-factor** — turns latency + jitter + loss into the single VoIP call-quality number (ITU-T E-model), the same metric paid monitoring suites charge for.
 - **Threshold alerts** — fire when a target stays slow or lossy for N samples: terminal bell, an in-app toast, an OS desktop notification, and a blinking row marker. Auto-clears on recovery.
-- **Traceroute drill-down** — press `Enter` (or click) on a row for an mtr-style hop-by-hop path with per-hop loss and per-probe timings, plus **GeoIP per hop** (flag, city and ASN) so you can see which countries and networks the traffic crosses.
+- **Traceroute drill-down** — press `Enter` (or click) on a row for an mtr-style hop-by-hop path with per-hop loss and per-probe timings, plus **GeoIP per hop** (country code, city and ASN) so you can see which countries and networks the traffic crosses.
 - **Per-country set, ready to go** — the Netherlands, Germany, United Kingdom, France, Cyprus, Italy, Spain, Greece, Sweden, Ireland and the United States are pre-configured with reachable hosts.
 - **Editable targets** — add (`a`), edit (`E`) and delete (`d`) targets right inside the TUI, or edit the TOML config by hand; reset stats with `r`. In-app changes are saved to the config immediately.
-- **GeoIP auto-detect & enrichment** — every target is looked up via ip-api.com: the detail panel shows its **city, region and hosting network (ASN + ISP)**, and when you add a target with country/flag left blank they are filled in automatically.
+- **GeoIP auto-detect & enrichment** — every target is looked up via ip-api.com: the detail panel shows its **city, region and hosting network (ASN + ISP)**, and when you add a target with country/code left blank they are filled in automatically.
+- **Works in every terminal** — each country is shown as its **two-letter code** (`NL`, `DE`, `US`), not a flag emoji. Many terminals (iTerm2 among them) can't render regional-indicator flags and fall back to two boxed letters; the code is always legible.
 - **Show filter** — flip the table between **all**, **mine only** (targets you added) and **others only** (the built-in set) with `f`.
 - **No root required** — uses TCP connect timing (port 443/80), so it works without raw-socket / ICMP privileges and measures real service latency.
 - **Modern terminal UX** — truecolor, mouse support, zebra-striped table, a live "heartbeat" spinner, keyboard and mouse navigation, sort modes and modal dialogs.
@@ -147,9 +148,11 @@ disable the triggers in `config.toml`.
 
 ## Configuration
 
-On first run a `config.toml` is created at `~/.config/pingmon/config.toml` (or a
-local `./config.toml` if one already exists, or wherever `$PINGMON_CONFIG` /
-`--config` points). It is plain TOML and meant to be hand-edited:
+On first run a `config.toml` is created at `~/.config/pingmon/config.toml` (or
+wherever `$PINGMON_CONFIG` / `--config` points). The location does **not** depend
+on your current directory, so targets you add in-app are always reloaded from the
+same file no matter where you launch `pingmon`. It is plain TOML and meant to be
+hand-edited:
 
 ```toml
 interval = 2.0        # poll period per target, seconds
@@ -178,7 +181,10 @@ source = "builtin"
 
 Add as many `[[targets]]` blocks as you like; any host or IP works, and the
 port is per-target. `source` is optional — if omitted it is inferred (hosts in
-the built-in set are `builtin`, everything else `user`).
+the built-in set are `builtin`, everything else `user`). `flag` is optional too:
+the UI shows the two-letter country code derived from it, so you can leave it out
+and let GeoIP fill it in. When adding a target in-app, the country field accepts a
+plain code like `PL`.
 
 ## How latency is measured
 

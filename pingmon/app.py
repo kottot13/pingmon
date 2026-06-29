@@ -25,6 +25,7 @@ from .netutil import desktop_notify, flag_emoji, geo_lookup, is_global_ip, trace
 from .pinger import resolve, tcp_ping
 from .render import (
     STATUS_META,
+    country_label,
     distribution_strip,
     latency_chart,
     latency_color,
@@ -74,8 +75,8 @@ class TargetFormScreen(ModalScreen[Target | None]):
                 value=init.country if init else "",
             )
             yield Input(
-                placeholder="Flag emoji 🇵🇱 (optional)", id="in-flag",
-                value=init.flag if init else "",
+                placeholder="Country code, e.g. PL (optional)", id="in-flag",
+                value=(init.code if init and init.code != "??" else ""),
             )
             yield Input(
                 placeholder="Host or IP (e.g. 1.1.1.1)", id="in-host",
@@ -86,7 +87,7 @@ class TargetFormScreen(ModalScreen[Target | None]):
                 value=str(init.port) if init else "443",
             )
             yield Label(
-                "Leave country/flag empty to auto-detect (GeoIP).",
+                "Leave country/code empty to auto-detect (GeoIP).",
                 id="add-hint",
             )
             with Horizontal(id="add-buttons"):
@@ -107,9 +108,12 @@ class TargetFormScreen(ModalScreen[Target | None]):
         if not host:
             self.query_one("#in-host", Input).focus()
             return
-        # empty country/flag are kept empty so the app can auto-detect via GeoIP
+        # empty country/code are kept empty so the app can auto-detect via GeoIP
         country = self.query_one("#in-country", Input).value.strip()
-        flag = self.query_one("#in-flag", Input).value.strip()
+        # the field accepts a 2-letter ISO code (turned into the stored flag) or,
+        # for flag-capable terminals, a flag emoji pasted directly; blank = detect.
+        raw = self.query_one("#in-flag", Input).value.strip()
+        flag = flag_emoji(raw) if (len(raw) == 2 and raw.isalpha()) else raw
         port_raw = self.query_one("#in-port", Input).value.strip() or "443"
         try:
             port = int(port_raw)
@@ -193,8 +197,7 @@ class AdvisorScreen(ModalScreen):
         for i, (mon, sc) in enumerate(ranked, start=1):
             rank_style = "bold #3ddc84" if i == 1 else "#9a9ab0"
             rank = Text(str(i), style=rank_style)
-            flag = mon.target.flag
-            name = Text.assemble((f"{flag} ", ""), (mon.target.country, "bold"))
+            name = country_label(mon.target.code, mon.target.country)
             if i == 1:
                 name.append("  ★", style="bold #3ddc84")
             host = Text(mon.target.host, style="#9a9ab0")
@@ -244,7 +247,7 @@ class TracerouteScreen(ModalScreen):
     def on_mount(self) -> None:
         head = Text()
         head.append("⇄ Traceroute   ", style="bold #7aa2f7")
-        head.append(f"{self.target.flag} {self.target.country}   ", style="bold")
+        head.append(f"{self.target.code}  {self.target.country}   ", style="bold")
         head.append(self.target.host, style="#9a9ab0")
         self.query_one("#trace-head", Static).update(head)
 
@@ -311,10 +314,10 @@ class TracerouteScreen(ModalScreen):
         data = await geo_lookup(ip)
         if not data:
             return
-        flag = flag_emoji(data.get("countryCode"))
+        code = (data.get("countryCode") or "??").upper()
         place = data.get("city") or data.get("country") or ip
         asn = (data.get("as") or "").split(" ", 1)[0]
-        txt = Text(f"{flag} {place}", style="#9a9ab0")
+        txt = Text(f"{code}  {place}", style="#9a9ab0")
         if asn.startswith("AS"):
             txt.append(f"  {asn}", style="#7a7a8c")
         try:
@@ -442,7 +445,7 @@ class PingMonApp(App):
 
     def _row_cells(self, mon: Monitor) -> list:
         st = mon.stats
-        name = Text.assemble((f"{mon.target.flag} ", ""), (mon.target.country, "bold"))
+        name = country_label(mon.target.code, mon.target.country)
         glyph_color = STATUS_META[st.status][1]
         glyph_style = f"bold {glyph_color}"
         if mon.key in self.alerting:
@@ -580,7 +583,7 @@ class PingMonApp(App):
         if best is not None:
             b.append("  ·  ★ ", style="#7a7a8c")
             b.append(PROFILE_META[self.profile][0], style="#7a7a8c")
-            b.append(f": {best.target.flag} {best.target.country}", style="bold #3ddc84")
+            b.append(f": {best.target.code}  {best.target.country}", style="bold #3ddc84")
         b.append("  ·  " + datetime.now().strftime("%H:%M:%S"), style="#7a7a8c")
         self.query_one("#banner", Static).update(b)
 
@@ -603,7 +606,7 @@ class PingMonApp(App):
         st = mon.stats
 
         title = Text()
-        title.append(f"{mon.target.flag}  ")
+        title.append(f"{mon.target.code}  ", style="bold #7aa2f7")
         title.append(mon.target.country, style="bold #e0e0f0")
         title.append("    ")
         label, color, glyph = STATUS_META[st.status]
@@ -838,7 +841,7 @@ class PingMonApp(App):
             save_config(self.cfg)
             city = data.get("city")
             where = f"{city}, {t.country}" if city else t.country
-            self.notify(f"Detected · {t.flag} {where}", timeout=2)
+            self.notify(f"Detected · {t.code} {where}", timeout=2)
         else:
             if t.country in ("", "…"):
                 t.country = t.host
