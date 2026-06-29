@@ -11,6 +11,9 @@ venv/
 # pingmon runtime config (machine-specific; lives in ~/.config/pingmon)
 /config.toml
 
+# research notes (private; not published to GitHub)
+/research/
+
 # OS / editor
 .DS_Store
 *.swp
