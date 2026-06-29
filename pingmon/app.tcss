@@ -1,0 +1,183 @@
+/* pingmon dark theme */
+
+Screen {
+    background: #14141c;
+    color: #e0e0f0;
+}
+
+#banner {
+    height: 1;
+    padding: 0 1;
+    background: #1c1c28;
+    color: #e0e0f0;
+}
+
+#body {
+    height: 1fr;
+}
+
+#left {
+    width: 1fr;
+    min-width: 70;
+    border-right: tall #2a2a3a;
+}
+
+#table {
+    height: 1fr;
+    background: #14141c;
+}
+
+DataTable > .datatable--header {
+    background: #1c1c28;
+    color: #8a8aa0;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: #2d3354;
+}
+
+DataTable > .datatable--hover {
+    background: #20202e;
+}
+
+#detail {
+    width: 54;
+    padding: 1 2;
+    background: #16161f;
+}
+
+#detail-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#detail-meta {
+    margin-bottom: 1;
+    color: #9a9ab0;
+}
+
+.detail-h {
+    color: #7a7a8c;
+    text-style: bold;
+    margin-top: 1;
+}
+
+#detail-spark {
+    height: 6;
+    margin: 0 0 1 0;
+}
+
+#detail-spark > .sparkline--max-color {
+    color: #7aa2f7;
+}
+
+#detail-spark > .sparkline--min-color {
+    color: #3ddc84;
+}
+
+#detail-quality {
+    margin-bottom: 1;
+}
+
+#detail-stats {
+    margin-top: 1;
+}
+
+#detail-hint {
+    margin-top: 2;
+    color: #6a6a7c;
+}
+
+/* Add / edit target modal */
+TargetFormScreen {
+    align: center middle;
+}
+
+#add-dialog {
+    width: 60;
+    height: auto;
+    padding: 1 2;
+    background: #1c1c28;
+    border: thick #7aa2f7;
+}
+
+#add-title {
+    text-style: bold;
+    color: #7aa2f7;
+    margin-bottom: 1;
+}
+
+#add-dialog Input {
+    margin-bottom: 1;
+}
+
+#add-hint {
+    color: #6a6a7c;
+    margin-bottom: 1;
+}
+
+#add-buttons {
+    height: auto;
+    align: right middle;
+}
+
+#add-buttons Button {
+    margin-left: 2;
+}
+
+/* Region Advisor modal */
+AdvisorScreen {
+    align: center middle;
+}
+
+#advisor-dialog {
+    width: 116;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    background: #1c1c28;
+    border: thick #7aa2f7;
+}
+
+#advisor-head {
+    margin-bottom: 1;
+}
+
+#advisor-table {
+    height: auto;
+    max-height: 24;
+    background: #1c1c28;
+}
+
+#advisor-foot {
+    margin-top: 1;
+}
+
+/* Traceroute modal */
+TracerouteScreen {
+    align: center middle;
+}
+
+#trace-dialog {
+    width: 108;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    background: #1c1c28;
+    border: thick #c9a0dc;
+}
+
+#trace-head {
+    margin-bottom: 1;
+}
+
+#trace-table {
+    height: auto;
+    max-height: 26;
+    background: #1c1c28;
+}
+
+#trace-foot {
+    margin-top: 1;
+}

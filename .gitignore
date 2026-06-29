@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# pingmon runtime config (machine-specific; lives in ~/.config/pingmon)
+/config.toml
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
