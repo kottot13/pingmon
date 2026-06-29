@@ -40,14 +40,15 @@ Use it like `htop` — install once, run `pingmon` from anywhere.
 ### pipx / uv (recommended, Linux + macOS)
 
 ```bash
-pipx install pingmon            # from PyPI once published
-pipx install .                  # or from a checkout of this repo
+pipx install pingmonitor                 # from PyPI
+pipx install .                           # or from a checkout of this repo
 pipx install git+https://github.com/kottot13/pingmon
-# uv works the same:  uv tool install pingmon   /   uvx pingmon
+# uv works the same:  uv tool install pingmonitor   /   uvx --from pingmonitor pingmon
 ```
 
-`pipx` keeps pingmon in its own isolated environment and puts the `pingmon`
-command on your `PATH`.
+The PyPI package is **`pingmonitor`**; it installs the **`pingmon`** command.
+`pipx` keeps it in its own isolated environment and puts `pingmon` on your
+`PATH`. Then just run `pingmon`.
 
 ### Homebrew (macOS / Linuxbrew)
 

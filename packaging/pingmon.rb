@@ -13,8 +13,8 @@ class Pingmon < Formula
 
   desc "TUI monitor of latency and availability to servers by country"
   homepage "https://github.com/kottot13/pingmon"
-  url "https://files.pythonhosted.org/packages/source/p/pingmon/pingmon-1.0.0.tar.gz"
-  sha256 "REPLACE_WITH_SDIST_SHA256"
+  url "https://files.pythonhosted.org/packages/4d/38/c6f6b59319d39d4d66de657ff39a4be41515e685fdd3b17ac981f202b43d/pingmonitor-1.0.0.tar.gz"
+  sha256 "702643a16ab4b012cdc65950caa98261f58ea0cd0e9630e7e23683fcb228be85"
   license "MIT"
 
   depends_on "python@3.12"

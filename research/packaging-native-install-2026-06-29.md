@@ -74,3 +74,15 @@ module, not the cwd).
 - Deferred (need a public repo / PyPI account from the user): actually
   publishing to PyPI, the Homebrew tap repo, and a Releases CI matrix. Replace
   the `kottot13` / sdist-sha256 placeholders once the repo + PyPI name exist.
+
+### Update — published 2026-06-29
+- The PyPI name `pingmon` was already taken (an unrelated "Monitor, record, and
+  display ping results" package). PyPI has no namespaces, so we shipped under
+  the distribution name **`pingmonitor`** while keeping the import package and
+  the CLI command as `pingmon` (allowed: dist name ≠ import name).
+- Published **pingmonitor 1.0.0** (sdist + wheel) to PyPI:
+  https://pypi.org/project/pingmonitor/1.0.0/ . Verified `pip install pingmonitor`
+  in a clean venv → `pingmon --version` and the TUI launch both work.
+- Homebrew formula filled in with the real sdist URL + sha256
+  (`702643a16ab4b012cdc65950caa98261f58ea0cd0e9630e7e23683fcb228be85`).
+- Install line for users: `pipx install pingmonitor` → run `pingmon`.

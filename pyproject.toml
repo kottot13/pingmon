@@ -1,5 +1,5 @@
 [project]
-name = "pingmon"
+name = "pingmonitor"
 version = "1.0.0"
 description = "TUI monitor of latency and availability to servers by country"
 readme = "README.md"
