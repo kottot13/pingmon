@@ -161,7 +161,27 @@ class Monitor:
         return self.target.key
 
 
-class TargetFormScreen(ModalScreen[Target | None]):
+class _ArrowNavScreen(ModalScreen):
+    """ModalScreen whose inputs/buttons are navigable with arrow keys.
+
+    Up/Down (and Left/Right once focus is on a button) move between fields and
+    buttons; an Input still uses Left/Right for its own text cursor, so typing is
+    unaffected. Used by every dialog that mixes inputs and buttons.
+    """
+
+    BINDINGS = [
+        Binding("down,right", "nav_next", "Next", show=False),
+        Binding("up,left", "nav_prev", "Prev", show=False),
+    ]
+
+    def action_nav_next(self) -> None:
+        self.focus_next()
+
+    def action_nav_prev(self) -> None:
+        self.focus_previous()
+
+
+class TargetFormScreen(_ArrowNavScreen):
     """Modal dialog to add or edit a target (fields pre-filled when editing)."""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
@@ -495,7 +515,7 @@ class DiagnosticsScreen(ModalScreen[str | None]):
         self.dismiss(self.keys[event.option_index])
 
 
-class CustomToolScreen(ModalScreen[tuple[str, bool] | None]):
+class CustomToolScreen(_ArrowNavScreen):
     """Ask for a tool to run on the server and whether to install it if missing."""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
@@ -542,7 +562,7 @@ class CustomToolScreen(ModalScreen[tuple[str, bool] | None]):
         self.dismiss((tool, install))
 
 
-class SshSetupScreen(ModalScreen[tuple[str, int] | None]):
+class SshSetupScreen(_ArrowNavScreen):
     """Ask for the SSH user + port to turn a target into a server you can log in to."""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
