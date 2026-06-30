@@ -21,6 +21,7 @@ class Pingmon < Formula
 
   # `brew update-python-resources` fills these in automatically:
   # resource "textual" do ... end
+  # resource "pyte" do ... end   # drives the embedded SSH / top terminals
   # resource "rich" do ... end
   # ...
 

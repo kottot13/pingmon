@@ -1,6 +1,6 @@
 [project]
 name = "pingmonitor"
-version = "1.1.0"
+version = "1.2.0"
 description = "TUI monitor of latency and availability to servers by country"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,7 +18,7 @@ classifiers = [
     "Topic :: System :: Networking :: Monitoring",
     "Topic :: System :: Monitoring",
 ]
-dependencies = ["textual>=0.80"]
+dependencies = ["textual>=0.80", "pyte>=0.8"]
 
 [project.urls]
 Homepage = "https://github.com/kottot13/pingmon"

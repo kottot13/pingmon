@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
+from dataclasses import replace
 from datetime import datetime
+from time import monotonic
 
 from rich.text import Text
 from textual import on
@@ -17,27 +20,130 @@ from textual.widgets import (
     Footer,
     Input,
     Label,
+    OptionList,
     Static,
 )
 
 from .config import Config, Target, load_config, save_config
-from .netutil import desktop_notify, flag_emoji, geo_lookup, is_global_ip, traceroute
-from .pinger import resolve, tcp_ping
+from .netutil import (
+    build_ssh_argv,
+    desktop_notify,
+    fetch_server_load,
+    flag_emoji,
+    geo_lookup,
+    is_global_ip,
+    ssh_agent_has_keys,
+    traceroute,
+)
+from .pinger import resolve, tcp_ping, tcp_ping_banner
 from .render import (
     STATUS_META,
     country_label,
-    distribution_strip,
+    distribution_block,
+    distribution_caption,
     latency_chart,
     latency_color,
     latency_text,
     loss_text,
-    quality_bar,
+    quality_block,
     sparkline,
 )
 from .scoring import PROFILE_META, PROFILES, grade, reason, score
 from .stats import TargetStats
+from .terminal import TerminalPane
+
+# Remote diagnostics offered by the `l` menu. Each entry runs over SSH in the
+# right console. `tui` entries are full-screen programs (exit with their own key
+# or Ctrl-]); the rest are one-shot reports piped to `less` (exit with q). Every
+# command sticks to tools shipped almost everywhere (coreutils / util-linux /
+# procps / iproute2 / systemd) and degrades gracefully when a nicer tool is
+# missing — important because servers are mostly Linux of varying minimalism.
+DIAG_MENU = [
+    {"key": "htop", "label": "htop — interactive processes", "tui": True,
+     "cmd": "command -v htop >/dev/null 2>&1 && exec htop; exec top"},
+    {"key": "atop", "label": "atop — processes + resource history", "tui": True,
+     "cmd": "command -v atop >/dev/null 2>&1 && exec atop; exec top"},
+    {"key": "top", "label": "top — interactive processes (always present)", "tui": True,
+     "cmd": "exec top"},
+    {"key": "load", "label": "Load average — why is it high (CPU/IO/top procs)", "tui": False,
+     "cmd": (
+        "echo '== load average =='; uptime; echo; "
+        "echo '== cpu & io: r=runnable b=blocked(IO) wa=iowait =='; vmstat 1 4; echo; "
+        "echo '== memory =='; (free -h 2>/dev/null || free); echo; "
+        "echo '== top by CPU =='; (ps -eo pid,user,pcpu,pmem,comm --sort=-pcpu 2>/dev/null | head -12 || ps aux | sort -rk3 | head -12); echo; "
+        "echo '== top by MEM =='; (ps -eo pid,user,pcpu,pmem,comm --sort=-pmem 2>/dev/null | head -12); echo; "
+        "echo '== per-disk I/O (iostat) =='; (iostat -x 1 2 2>/dev/null || echo 'iostat not installed (apt install sysstat)')"
+     )},
+    {"key": "logins", "label": "Logins & intrusion — who, history, failed", "tui": False,
+     "cmd": (
+        "echo '== logged in now =='; w; echo; "
+        "echo '== recent logins =='; last -n 25; echo; "
+        "echo '== failed logins (btmp) =='; (lastb -n 25 2>/dev/null || sudo -n lastb -n 25 2>/dev/null || echo '(need root to read /var/log/btmp)')"
+     )},
+    {"key": "ssh", "label": "SSH auth log — accepted & brute-force", "tui": False,
+     "cmd": (
+        "echo '== recent sshd auth =='; "
+        "(journalctl -u ssh -u sshd --no-pager -n 200 2>/dev/null || grep -hE 'sshd' /var/log/auth.log /var/log/secure 2>/dev/null | tail -n 200 || echo 'no journal/auth log access'); echo; "
+        "echo '== failed passwords by source IP =='; "
+        "(journalctl -u ssh -u sshd --no-pager 2>/dev/null || cat /var/log/auth.log /var/log/secure 2>/dev/null) | grep -i 'failed password' | grep -oE 'from [0-9.]+' | sort | uniq -c | sort -rn | head -15"
+     )},
+    {"key": "conns", "label": "Connections & ports — listening / established", "tui": False,
+     "cmd": (
+        "echo '== listening sockets =='; (ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || netstat -tln); echo; "
+        "echo '== established connections =='; (ss -tunp 2>/dev/null || netstat -tunp 2>/dev/null)"
+     )},
+    {"key": "kernel", "label": "Kernel & system log — dmesg / warnings", "tui": False,
+     "cmd": (
+        "echo '== dmesg (last 60) =='; (dmesg -T 2>/dev/null | tail -n 60 || dmesg | tail -n 60); echo; "
+        "echo '== journal warnings+ this boot =='; (journalctl -p warning -b --no-pager -n 80 2>/dev/null || echo 'journalctl not available')"
+     )},
+    {"key": "nettraf", "label": "Live network traffic — iftop/nload (or counters)", "tui": True,
+     "cmd": (
+        "if command -v iftop >/dev/null 2>&1; then exec iftop; fi; "
+        "if command -v nethogs >/dev/null 2>&1; then exec nethogs; fi; "
+        "if command -v nload >/dev/null 2>&1; then exec nload; fi; "
+        "if command -v bmon >/dev/null 2>&1; then exec bmon; fi; "
+        "echo 'No iftop/nethogs/nload/bmon installed — showing live interface counters (Ctrl-] to exit).'; sleep 1; "
+        "exec watch -n1 'ip -s link'"
+     )},
+    {"key": "ifstat", "label": "Interface stats — packets/bytes/errors/drops", "tui": False,
+     "cmd": (
+        "echo '== interface counters =='; (ip -s link 2>/dev/null || netstat -i); echo; "
+        "echo '== socket summary =='; (ss -s 2>/dev/null || echo 'ss not available')"
+     )},
+    {"key": "disk", "label": "Disk & I/O — usage, block devices, biggest dirs", "tui": False,
+     "cmd": (
+        "echo '== filesystem usage =='; df -h; echo; "
+        "echo '== block devices =='; (lsblk 2>/dev/null || echo 'lsblk not available'); echo; "
+        "echo '== biggest dirs under / (one level) =='; (du -xhd1 / 2>/dev/null | sort -rh | head -15 || echo)"
+     )},
+]
+DIAG_KEYS = [e["key"] for e in DIAG_MENU]
 
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+class NavDataTable(DataTable):
+    """DataTable that lets ←/→ bubble up so the app can switch panels.
+
+    The row cursor only moves vertically here, so the built-in horizontal
+    cursor bindings are disabled; the arrows then reach the app's panel-focus
+    bindings instead of being swallowed by the table.
+    """
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        if action in ("cursor_left", "cursor_right"):
+            return False
+        return True
+
+
+class NavScroll(VerticalScroll):
+    """VerticalScroll that lets ←/→ bubble up for panel switching."""
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        if action in ("scroll_left", "scroll_right"):
+            return False
+        return True
 
 
 class Monitor:
@@ -49,6 +155,9 @@ class Monitor:
         self.ip: str | None = None
         self.geo: dict | None = None  # city / ISP / ASN from GeoIP
         self.worker = None
+        self.load: dict | None = None   # live server load snapshot (servers only)
+        self.load_ts: float | None = None
+        self.load_busy = False
 
     @property
     def key(self) -> str:
@@ -83,11 +192,16 @@ class TargetFormScreen(ModalScreen[Target | None]):
                 value=init.host if init else "",
             )
             yield Input(
-                placeholder="Port (default 443)", id="in-port",
+                placeholder="Port (default 443; 22 for SSH)", id="in-port",
                 value=str(init.port) if init else "443",
             )
+            yield Input(
+                placeholder="SSH user (blank = plain monitor)", id="in-ssh",
+                value=(init.ssh_user if init else ""),
+            )
             yield Label(
-                "Leave country/code empty to auto-detect (GeoIP).",
+                "Leave country/code empty to auto-detect (GeoIP). "
+                "Set an SSH user to make this your server (Enter logs in, l = top).",
                 id="add-hint",
             )
             with Horizontal(id="add-buttons"):
@@ -119,7 +233,12 @@ class TargetFormScreen(ModalScreen[Target | None]):
             port = int(port_raw)
         except ValueError:
             port = 443
-        self.dismiss(Target(country=country, flag=flag, host=host, port=port, source="user"))
+        ssh_user = self.query_one("#in-ssh", Input).value.strip()
+        top_tool = self.initial.top_tool if self.initial else ""
+        self.dismiss(Target(
+            country=country, flag=flag, host=host, port=port, source="user",
+            ssh_user=ssh_user, top_tool=top_tool,
+        ))
 
 
 def _score_bar(value: float | None, width: int = 12) -> Text:
@@ -272,13 +391,18 @@ class TracerouteScreen(ModalScreen):
 
     async def _run(self) -> None:
         table = self.query_one("#trace-table", DataTable)
-        async for hop in traceroute(self.target.host, max_hops=24, queries=3):
+        any_reply = False
+        hops_seen = 0
+        async for hop in traceroute(self.target.host, self.target.port, max_hops=24, queries=3):
             if "error" in hop:
                 self.query_one("#trace-foot", Static).update(
                     Text(hop["error"], style="bold #ff3860")
                 )
                 return
+            hops_seen += 1
             ok = [t for t in hop["times"] if t is not None]
+            if ok:
+                any_reply = True
             best = min(ok) if ok else None
             probes = Text()
             for t in hop["times"]:
@@ -306,9 +430,19 @@ class TracerouteScreen(ModalScreen):
             )
             if is_global_ip(ip):
                 self.run_worker(self._geo_hop(rowkey, ip), group="trace-geo")
-        self.query_one("#trace-foot", Static).update(
-            Text("done   ·   Esc close", style="#6a6a7c")
-        )
+
+        if hops_seen == 0:
+            foot = Text("no route data — is `traceroute` installed?", style="bold #ff3860")
+        elif not any_reply:
+            # every hop timed out: the host/network drops traceroute probes
+            foot = Text(
+                "no hops replied — this host or its network blocks traceroute "
+                "(common on VPS). The service can still be reachable.   ·   Esc close",
+                style="#f4bf4f",
+            )
+        else:
+            foot = Text("done   ·   Esc close", style="#6a6a7c")
+        self.query_one("#trace-foot", Static).update(foot)
 
     async def _geo_hop(self, rowkey: str, ip: str) -> None:
         data = await geo_lookup(ip)
@@ -331,6 +465,86 @@ class TracerouteScreen(ModalScreen):
         self.dismiss(None)
 
 
+class DiagnosticsScreen(ModalScreen[str | None]):
+    """Scrollable menu of remote diagnostics; returns the chosen DIAG_MENU key."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, default: str = "htop") -> None:
+        super().__init__()
+        self.default = default if default in DIAG_KEYS else "htop"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="diag-dialog"):
+            yield Label("Remote diagnostics", id="diag-title")
+            yield Label(
+                "↑/↓ choose · Enter runs · exit later with q (or Ctrl-])",
+                id="diag-hint",
+            )
+            yield OptionList(*[e["label"] for e in DIAG_MENU], id="diag-list")
+
+    def on_mount(self) -> None:
+        ol = self.query_one("#diag-list", OptionList)
+        ol.highlighted = DIAG_KEYS.index(self.default)
+        ol.focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    @on(OptionList.OptionSelected)
+    def _pick(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(DIAG_MENU[event.option_index]["key"])
+
+
+class SshSetupScreen(ModalScreen[tuple[str, int] | None]):
+    """Ask for the SSH user + port to turn a target into a server you can log in to."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, host: str, default_user: str = "", default_port: int = 22) -> None:
+        super().__init__()
+        self.host = host
+        self.default_user = default_user
+        self.default_port = default_port
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="ssh-dialog"):
+            yield Label(f"Log in to {self.host}", id="ssh-title")
+            yield Input(placeholder="SSH user (e.g. root)", id="in-ssh-user",
+                        value=self.default_user)
+            yield Input(placeholder="SSH port (default 22)", id="in-ssh-port",
+                        value=str(self.default_port))
+            yield Label(
+                "Saved on the target so it becomes your server: availability is "
+                "then checked over SSH, and l opens server tools (htop, load, logins…).",
+                id="ssh-hint",
+            )
+            with Horizontal(id="ssh-buttons"):
+                yield Button("Connect", variant="success", id="ssh-ok")
+                yield Button("Cancel", variant="default", id="ssh-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#in-ssh-user", Input).focus()
+
+    @on(Button.Pressed, "#ssh-cancel")
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    @on(Input.Submitted)
+    @on(Button.Pressed, "#ssh-ok")
+    def _submit(self) -> None:
+        user = self.query_one("#in-ssh-user", Input).value.strip()
+        if not user:
+            self.query_one("#in-ssh-user", Input).focus()
+            return
+        port_raw = self.query_one("#in-ssh-port", Input).value.strip() or "22"
+        try:
+            port = int(port_raw)
+        except ValueError:
+            port = 22
+        self.dismiss((user, port))
+
+
 class PingMonApp(App):
     CSS_PATH = "app.tcss"
     TITLE = "pingmon"
@@ -344,7 +558,9 @@ class PingMonApp(App):
         Binding("g", "advisor", "Advisor"),
         Binding("p", "cycle_profile", "Profile"),
         Binding("f", "cycle_filter", "Filter"),
-        Binding("enter", "traceroute", "Trace"),
+        Binding("enter", "login", "SSH"),
+        Binding("l", "top", "Tools"),
+        Binding("t", "traceroute", "Trace"),
         Binding("a", "add_target", "Add"),
         Binding("A", "toggle_alerts", "Alerts on/off"),
         Binding("E", "edit_target", "Edit"),
@@ -353,6 +569,12 @@ class PingMonApp(App):
         Binding("e", "open_config", "Config"),
         Binding("up,k", "cursor_up", "Up", show=False),
         Binding("down,j", "cursor_down", "Down", show=False),
+        Binding("shift+left", "focus_left", "Left panel", show=False),
+        Binding("shift+right", "focus_right", "Right panel", show=False),
+        # Priority so it fires even while a live terminal pane has focus and is
+        # forwarding every other key to the remote. This is the always-available
+        # way out of an SSH shell or top viewer.
+        Binding("ctrl+right_square_bracket", "detach", "Exit console", priority=True),
     ]
 
     SORT_MODES = ["country", "latency", "loss", "jitter"]
@@ -379,6 +601,9 @@ class PingMonApp(App):
         self.selected: Monitor | None = None
         self.alerting: set[str] = set()  # keys of targets currently in alert
         self.alerts_enabled = True       # master switch for the alert system
+        self.focused_panel = "left"      # which panel ←/→ navigation highlights
+        self._session: dict | None = None  # active embedded SSH session metadata
+        self.has_agent = False           # ssh-agent/keys present → live load works
 
     # ---------- layout ----------
 
@@ -386,18 +611,25 @@ class PingMonApp(App):
         yield Static(id="banner")
         with Horizontal(id="body"):
             with Vertical(id="left"):
-                yield DataTable(id="table", zebra_stripes=True, cursor_type="row")
-            with VerticalScroll(id="detail"):
-                yield Static(id="detail-title")
-                yield Static(id="detail-meta")
-                yield Label("Latency · recent samples", classes="detail-h")
-                yield Static(id="detail-spark")
-                yield Static(id="detail-quality")
-                yield Label("Distribution · min — median — max", classes="detail-h")
-                yield Static(id="detail-dist")
-                yield Static(id="detail-distsum")
-                yield Static(id="detail-stats")
-                yield Static(id="detail-hint")
+                yield NavDataTable(id="table", zebra_stripes=True, cursor_type="row")
+                yield TerminalPane(id="left-term")
+                yield Static(id="left-term-hint", classes="term-hint")
+            with Vertical(id="detail"):
+                with NavScroll(id="detail-scroll"):
+                    yield Static(id="detail-title")
+                    yield Static(id="detail-meta")
+                    yield Label("Server load · live", classes="detail-h", id="detail-load-h")
+                    yield Static(id="detail-load")
+                    yield Label("Latency · recent samples", classes="detail-h")
+                    yield Static(id="detail-spark")
+                    yield Static(id="detail-quality")
+                    yield Label("Distribution · how often each latency occurs", classes="detail-h")
+                    yield Static(id="detail-dist")
+                    yield Static(id="detail-distsum")
+                    yield Static(id="detail-stats")
+                    yield Static(id="detail-hint")
+                yield TerminalPane(id="right-term")
+                yield Static(id="right-term-hint", classes="term-hint")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -423,6 +655,17 @@ class PingMonApp(App):
             self.selected = self.order[0]
         self.set_interval(0.2, self._tick)
         self._tick()
+        self._update_focus()
+        self.has_agent = ssh_agent_has_keys()
+        self.set_interval(2.0, self._refresh_selected_load)
+
+    def on_unmount(self) -> None:
+        # Don't leave orphaned ssh/htop children behind on exit.
+        for sel in ("#left-term", "#right-term"):
+            try:
+                self.query_one(sel, TerminalPane).stop()
+            except Exception:
+                pass
 
     # ---------- ping engine ----------
 
@@ -435,7 +678,11 @@ class PingMonApp(App):
                 mon.ip = mon.geo.get("query")
         while True:
             if not self.paused:
-                lat = await tcp_ping(
+                # Servers are probed by reading the SSH banner, so a host that
+                # only completes the TCP handshake (e.g. under a DDoS scrubber)
+                # reads DOWN instead of a false UP. Plain targets keep TCP-connect.
+                probe = tcp_ping_banner if mon.target.server else tcp_ping
+                lat = await probe(
                     mon.target.host, mon.target.port, self.cfg.timeout
                 )
                 mon.stats.record(lat)
@@ -599,11 +846,95 @@ class PingMonApp(App):
                 best = mon
         return best, best_score
 
+    # ---------- live server load (detail panel) ----------
+
+    def _refresh_selected_load(self) -> None:
+        """Poll the selected server's load over SSH every ~8s (key auth only)."""
+        mon = self.selected
+        if mon is None or not mon.target.server or not self.has_agent:
+            return
+        if mon.load_busy:
+            return
+        if mon.load_ts is not None and (monotonic() - mon.load_ts) < 8.0:
+            return
+        mon.load_busy = True
+        self.run_worker(self._load_worker(mon), group="load")
+
+    async def _load_worker(self, mon: Monitor) -> None:
+        t = mon.target
+        try:
+            data = await fetch_server_load(t.ssh_user, t.host, t.port)
+        except Exception:
+            data = None
+        mon.load = data
+        mon.load_ts = monotonic()
+        mon.load_busy = False
+        if mon is self.selected:
+            self._update_detail()
+
+    def _server_load_block(self, mon: Monitor) -> Text:
+        if not self.has_agent:
+            return Text("set up ssh-agent / a key for live load", style="#6a6a7c")
+        info = mon.load
+        if info is None:
+            if mon.load_ts is None:
+                return Text("fetching…", style="#6a6a7c")
+            return Text("unavailable (needs key auth + Linux)", style="#6a6a7c")
+
+        out = Text()
+        la = info.get("la")
+        ncpu = info.get("ncpu")
+        if la:
+            ratio = (la[0] / ncpu) if ncpu else la[0]
+            col = (
+                "#3ddc84" if ratio < 0.7
+                else "#f4bf4f" if ratio < 1.0
+                else "#fd8d3c" if ratio < 2.0
+                else "#ff3860"
+            )
+            out.append("load  ", style="#7a7a8c")
+            out.append(f"{la[0]:.2f} {la[1]:.2f} {la[2]:.2f}", style=f"bold {col}")
+            if ncpu:
+                out.append(f"   {ncpu} core{'s' if ncpu != 1 else ''}", style="#7a7a8c")
+            if ncpu and ratio >= 1.0:
+                out.append("  overloaded", style="bold #ff3860")
+            out.append("\n")
+        for label, key in (("cpu", "cpu"), ("mem", "mem")):
+            procs = info.get(key) or []
+            if procs:
+                out.append(f"{label}   ", style="#7a7a8c")
+                for pct, name in procs[:3]:
+                    out.append(f"{pct:.0f}% ", style="bold #c9a0dc")
+                    out.append(f"{name}  ", style="#9a9ab0")
+                out.append("\n")
+        extra = Text()
+        dw = info.get("dwait")
+        if dw:
+            extra.append(f"{dw} task(s) waiting on disk  ", style="bold #fd8d3c")
+        rf = info.get("rootfs")
+        if rf:
+            extra.append(f"·  / {rf}  ", style="#9a9ab0")
+        mu, mt = info.get("mem_used"), info.get("mem_total")
+        if mu and mt:
+            extra.append(f"·  mem {mu}/{mt} MB", style="#9a9ab0")
+        if extra.plain.strip():
+            out.append_text(extra)
+        age = "" if mon.load_ts is None else f"  ({monotonic() - mon.load_ts:.0f}s ago)"
+        out.append(age, style="#555566")
+        return out
+
     def _update_detail(self) -> None:
         mon = self.selected
         if mon is None:
             return
         st = mon.stats
+
+        is_server = mon.target.server
+        self.query_one("#detail-load-h", Label).display = is_server
+        load_widget = self.query_one("#detail-load", Static)
+        load_widget.display = is_server
+        if is_server:
+            load_widget.update(self._server_load_block(mon))
 
         title = Text()
         title.append(f"{mon.target.code}  ", style="bold #7aa2f7")
@@ -635,34 +966,20 @@ class PingMonApp(App):
             latency_chart(st.samples, width=44, height=6)
         )
 
-        q = Text("quality  ", style="#7a7a8c")
-        q.append_text(quality_bar(st.last, width=24))
-        self.query_one("#detail-quality", Static).update(q)
+        self.query_one("#detail-quality", Static).update(quality_block(st.last, width=16))
 
-        self.query_one("#detail-dist", Static).update(distribution_strip(st.samples, width=34))
-        self.query_one("#detail-distsum", Static).update(self._dist_summary(st))
+        self.query_one("#detail-dist", Static).update(distribution_block(st, width=30))
+        self.query_one("#detail-distsum", Static).update(distribution_caption(st))
 
         self.query_one("#detail-stats", Static).update(self._stats_block(st))
 
         hint = Text(
-            "[g] advisor   [p] profile   [f] filter   [enter] traceroute   [m] by ms   [space] pause\n"
-            "[A] alerts on/off   [s] sort   [a] add   [E] edit   [d] delete   [r] reset   [e] config   [q] quit",
+            "[enter] ssh login   [l] tools   [t] traceroute   [ctrl-]] exit console   [shift+←/→] panel   [g] advisor\n"
+            "[p] profile   [f] filter   [m] by ms   [space] pause   [A] alerts   [s] sort   [a] add   [E] edit   "
+            "[d] delete   [r] reset   [e] config   [q] quit",
             style="#6a6a7c",
         )
         self.query_one("#detail-hint", Static).update(hint)
-
-    def _dist_summary(self, st: TargetStats) -> Text:
-        out = Text()
-        for label, val in (
-            ("min", st.vmin),
-            ("med", st.median),
-            ("p90", st.percentile(90.0)),
-            ("max", st.vmax),
-        ):
-            out.append(f"{label} ", style="#7a7a8c")
-            out.append_text(latency_text(val))
-            out.append("  ")
-        return out
 
     def _stats_block(self, st: TargetStats) -> Text:
         def row(name: str, value: Text) -> Text:
@@ -708,14 +1025,15 @@ class PingMonApp(App):
         if 0 <= idx < len(self.order):
             self.selected = self.order[idx]
             self._update_detail()
+            self._refresh_selected_load()
 
     @on(DataTable.RowSelected)
     def _on_row_selected(self, event: DataTable.RowSelected) -> None:
-        # Enter (or click) on a row opens the traceroute drill-down.
+        # Enter (or click) on a row logs in to the server in the left panel.
         idx = event.cursor_row
         if 0 <= idx < len(self.order):
             self.selected = self.order[idx]
-            self.push_screen(TracerouteScreen(self.selected.target))
+            self.action_login()
 
     # ---------- actions ----------
 
@@ -916,11 +1234,238 @@ class PingMonApp(App):
         if self.selected is not None:
             self.push_screen(TracerouteScreen(self.selected.target))
 
+    # ---------- SSH / remote ----------
+
+    def _terminal_live(self) -> bool:
+        return any(
+            self.query_one(sel, TerminalPane).running
+            for sel in ("#left-term", "#right-term")
+        )
+
+    def _ensure_server(self, mon: Monitor, then) -> None:
+        """Run `then()` once `mon` is a server, prompting for SSH user/port if not."""
+        if mon.target.server:
+            then()
+            return
+
+        def setup(result: tuple[str, int] | None) -> None:
+            if result is None:
+                return
+            user, port = result
+            self._promote_to_server(mon, user, port)
+            then()
+
+        self.push_screen(
+            SshSetupScreen(
+                mon.target.host,
+                default_user=os.environ.get("USER", ""),
+                default_port=22,
+            ),
+            setup,
+        )
+
+    def _promote_to_server(self, mon: Monitor, user: str, ssh_port: int) -> None:
+        """Save SSH user/port on the target and restart its probe on the SSH port."""
+        old = mon.target
+        mon.target = replace(old, ssh_user=user, port=ssh_port, source="user")
+        self.cfg.targets = [m.target for m in self.monitors]
+        save_config(self.cfg)
+        if (mon.target.host, mon.target.port) != (old.host, old.port):
+            self.alerting.discard(old.key)
+            mon.stats.reset()
+            mon.ip = None
+            if mon.worker is not None:
+                mon.worker.cancel()
+            mon.worker = self.run_worker(
+                self._ping_loop(mon, 0.0), name=mon.key, group="ping"
+            )
+        self._resort()
+
+    def action_login(self) -> None:
+        """Enter: open a live SSH shell for the selected server (left panel)."""
+        if self.query_one("#left-term", TerminalPane).running:
+            return  # an SSH shell is already live on the left
+        mon = self.selected
+        if mon is None:
+            return
+
+        def connect() -> None:
+            t = mon.target
+            argv = build_ssh_argv(t.ssh_user, t.host, t.port)
+            if ssh_agent_has_keys():
+                self.notify(f"Connecting {t.ssh_user}@{t.host} (ssh-agent)…", timeout=2)
+            else:
+                self.notify(
+                    f"Connecting {t.ssh_user}@{t.host} — type the password in the panel.",
+                    timeout=3,
+                )
+            self._start_terminal("left", argv, mon=mon, retry=self.action_login)
+
+        self._ensure_server(mon, connect)
+
+    def action_top(self) -> None:
+        """l: choose htop/atop/top and run it live in the right panel."""
+        if self.query_one("#right-term", TerminalPane).running:
+            return  # a top viewer is already live on the right
+        mon = self.selected
+        if mon is None:
+            return
+
+        def choose() -> None:
+            def handle(key: str | None) -> None:
+                if key is None:
+                    return
+                t = mon.target
+                t.top_tool = key
+                self.cfg.targets = [m.target for m in self.monitors]
+                save_config(self.cfg)
+                remote = self._diag_command(key)
+                argv = build_ssh_argv(t.ssh_user, t.host, t.port, remote_cmd=remote)
+                self._start_terminal("right", argv, mon=mon, retry=self.action_top)
+
+            self.push_screen(DiagnosticsScreen(mon.target.top_tool or "htop"), handle)
+
+        self._ensure_server(mon, choose)
+
+    @staticmethod
+    def _diag_command(key: str) -> str:
+        """Remote shell command for a DIAG_MENU key (reports get paged through less)."""
+        entry = next((e for e in DIAG_MENU if e["key"] == key), DIAG_MENU[0])
+        if entry["tui"]:
+            return entry["cmd"]
+        return f"( {entry['cmd']} ) 2>&1 | less -R"
+
+    _TERM_HINT = "Ctrl-]  EXIT to pingmon   ·   Shift+←/→ switch panel   ·   q exits the tool   ·   type the SSH password if asked"
+
+    def _start_terminal(
+        self, side: str, argv: list[str], *,
+        mon: Monitor | None = None, retry=None,
+    ) -> None:
+        if side == "left":
+            term = self.query_one("#left-term", TerminalPane)
+            self.query_one("#table", DataTable).styles.display = "none"
+            hint = self.query_one("#left-term-hint", Static)
+        else:
+            term = self.query_one("#right-term", TerminalPane)
+            self.query_one("#detail-scroll", VerticalScroll).styles.display = "none"
+            hint = self.query_one("#right-term-hint", Static)
+        hint.update(self._TERM_HINT)
+        hint.styles.display = "block"
+        self._session = {"side": side, "mon": mon, "retry": retry}
+        self.notify("Press  Ctrl-]  to exit this console back to pingmon", timeout=6)
+        self.run_worker(self._run_terminal(term, argv, side), name=f"term-{side}")
+
+    async def _run_terminal(self, term: TerminalPane, argv: list[str], side: str) -> None:
+        try:
+            await term.start(argv)
+        except Exception as exc:  # ssh missing, pty error, etc. — don't crash
+            self._restore_panel(side)
+            self._session = None
+            try:
+                term.styles.display = "none"
+            except Exception:
+                pass
+            self.notify(f"Could not start session: {exc}", severity="error", timeout=6)
+
+    def _restore_panel(self, side: str) -> None:
+        if side == "left":
+            self.query_one("#table", DataTable).styles.display = "block"
+            self.query_one("#left-term-hint", Static).styles.display = "none"
+            self.focused_panel = "left"
+        else:
+            self.query_one("#detail-scroll", VerticalScroll).styles.display = "block"
+            self.query_one("#right-term-hint", Static).styles.display = "none"
+            self.focused_panel = "right"
+        self._update_focus()
+
+    def action_detach(self) -> None:
+        """Exit the console in the focused panel (or any live one) to the dashboard."""
+        focused = "#left-term" if self.focused_panel == "left" else "#right-term"
+        # prefer the focused panel's console, else fall back to whichever is live
+        for sel in (focused, "#left-term", "#right-term"):
+            term = self.query_one(sel, TerminalPane)
+            if term.running:
+                term.stop()
+                self.notify("Left the console", timeout=1.5)
+                return
+
+    @on(TerminalPane.Exited)
+    def _on_terminal_exit(self, event: TerminalPane.Exited) -> None:
+        side = "left" if event.pane.id == "left-term" else "right"
+        self._restore_panel(side)
+
+        sess, self._session = self._session, None
+        # ssh exits 255 on connection/auth failure (e.g. wrong SSH port). Reopen
+        # the setup dialog, prefilled, so the port/user can be corrected — a saved
+        # wrong port would otherwise be reconnected to silently on every Enter.
+        if (
+            sess is not None
+            and event.exit_code == 255
+            and sess.get("mon") is not None
+            and sess["mon"].target.server
+        ):
+            mon = sess["mon"]
+            retry = sess.get("retry")
+            self.notify(
+                f"SSH failed ({mon.target.ssh_user}@{mon.target.host}:{mon.target.port}) "
+                "— check the user/port.",
+                severity="warning", timeout=4,
+            )
+
+            def setup(result: tuple[str, int] | None) -> None:
+                if result is None:
+                    return
+                user, port = result
+                self._promote_to_server(mon, user, port)
+                if retry is not None:
+                    retry()
+
+            self.push_screen(
+                SshSetupScreen(
+                    mon.target.host,
+                    default_user=mon.target.ssh_user,
+                    default_port=mon.target.port,
+                ),
+                setup,
+            )
+
+    # ---------- panel focus ----------
+
+    def action_focus_left(self) -> None:
+        self.focused_panel = "left"
+        self._update_focus()
+
+    def action_focus_right(self) -> None:
+        self.focused_panel = "right"
+        self._update_focus()
+
+    def _update_focus(self) -> None:
+        left = self.query_one("#left", Vertical)
+        right = self.query_one("#detail", Vertical)
+        left.set_class(self.focused_panel == "left", "-focused")
+        right.set_class(self.focused_panel == "right", "-focused")
+        try:
+            if self.focused_panel == "left":
+                term = self.query_one("#left-term", TerminalPane)
+                (term if term.running else self.query_one("#table", DataTable)).focus()
+            else:
+                term = self.query_one("#right-term", TerminalPane)
+                target = term if term.running else self.query_one("#detail-scroll", VerticalScroll)
+                target.focus()
+        except Exception:
+            pass
+
     def action_cursor_up(self) -> None:
-        self.query_one("#table", DataTable).action_cursor_up()
+        if self.focused_panel == "right":
+            self.query_one("#detail-scroll", VerticalScroll).scroll_up()
+        else:
+            self.query_one("#table", DataTable).action_cursor_up()
 
     def action_cursor_down(self) -> None:
-        self.query_one("#table", DataTable).action_cursor_down()
+        if self.focused_panel == "right":
+            self.query_one("#detail-scroll", VerticalScroll).scroll_down()
+        else:
+            self.query_one("#table", DataTable).action_cursor_down()
 
 
 def main() -> None:

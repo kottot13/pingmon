@@ -16,7 +16,9 @@ average, jitter, packet loss, a status indicator, and an animated trend graph.
 - **★ Region Advisor** *(unique)* — ranks regions by a composite 0–100 score under a chosen **use-case profile** (VoIP / Gaming / Web / Bulk) and highlights the best region to pick right now. Press `g`. See [below](#region-advisor).
 - **MOS / R-factor** — turns latency + jitter + loss into the single VoIP call-quality number (ITU-T E-model), the same metric paid monitoring suites charge for.
 - **Threshold alerts** — fire when a target stays slow or lossy for N samples: terminal bell, an in-app toast, an OS desktop notification, and a blinking row marker. Auto-clears on recovery.
-- **Traceroute drill-down** — press `Enter` (or click) on a row for an mtr-style hop-by-hop path with per-hop loss and per-probe timings, plus **GeoIP per hop** (country code, city and ASN) so you can see which countries and networks the traffic crosses.
+- **Your own servers** *(new)* — mark a target with an SSH user and it becomes a server you can act on: press `Enter` to open a **live SSH shell** right inside the left panel (uses `ssh-agent` automatically, otherwise ssh prompts for the password in the panel), and `l` to run **`htop` / `atop` / `top`** live inside the right panel. Switch panels with `← / →`; leave a session with the tool's own `q` or `Ctrl-]`.
+- **Honest availability for servers** *(new)* — a server isn't called UP just because the TCP edge answers (a box behind a DDoS scrubber still completes the handshake). For servers, availability is measured by reading the SSH banner, so a host you genuinely can't log in to reads **DOWN**.
+- **Traceroute drill-down** — press `t` on a row for an mtr-style hop-by-hop path with per-hop loss and per-probe timings, plus **GeoIP per hop** (country code, city and ASN) so you can see which countries and networks the traffic crosses. For a server it probes with **TCP to the open port** (on macOS, and on Linux when run as root), which reaches hosts that drop the usual UDP/ICMP probes — the case where you can SSH in but a plain traceroute shows only `*`.
 - **Per-country set, ready to go** — the Netherlands, Germany, United Kingdom, France, Cyprus, Italy, Spain, Greece, Sweden, Ireland and the United States are pre-configured with reachable hosts.
 - **Editable targets** — add (`a`), edit (`E`) and delete (`d`) targets right inside the TUI, or edit the TOML config by hand; reset stats with `r`. In-app changes are saved to the config immediately.
 - **GeoIP auto-detect & enrichment** — every target is looked up via ip-api.com: the detail panel shows its **city, region and hosting network (ASN + ISP)**, and when you add a target with country/code left blank they are filled in automatically.
@@ -32,7 +34,9 @@ average, jitter, packet loss, a status indicator, and an animated trend graph.
 ## Requirements
 
 - Python 3.11+ (not needed for the standalone binary below)
-- `textual >= 0.80` (installed automatically)
+- `textual >= 0.80` and `pyte >= 0.8` (installed automatically; `pyte` drives the
+  embedded SSH / top terminals)
+- A working `ssh` client on your `PATH` for the SSH login and remote-top features
 
 ## Install as a system command
 
@@ -90,8 +94,12 @@ CLI flags (`-V/--version`, `-c/--config PATH`).
 
 | Key            | Action                          |
 | -------------- | ------------------------------- |
-| `↑ / ↓`, `j/k` | Move selection                  |
-| `Enter`        | Traceroute drill-down for the selected target |
+| `↑ / ↓`, `j/k` | Move selection (or scroll the focused panel) |
+| `← / →`        | Switch focus between the left (table) and right (detail) panel |
+| `Enter`        | SSH login to the selected server, live in the left panel (asks for user/port the first time) |
+| `l`            | Remote diagnostics menu (htop/top, load causes, logins, SSH log, connections, kernel log, traffic, disk), live in the right panel |
+| `t`            | Traceroute drill-down for the selected target |
+| `Ctrl-]`       | Exit a live SSH / top console back to the dashboard — always works, even mid-session (a hint bar under the console reminds you). htop/atop/top also quit on their own `q` |
 | `g`            | Open the Region Advisor (`[` `]` / `p` switch profile inside) |
 | `p`            | Cycle the Advisor profile (VoIP / Gaming / Web / Bulk) |
 | `f`            | Cycle the show filter (all / mine only / others only) |
@@ -105,6 +113,53 @@ CLI flags (`-V/--version`, `-c/--config PATH`).
 | `r`            | Reset all statistics            |
 | `e`            | Show the config file path       |
 | `q`            | Quit                            |
+
+## Your own servers (SSH)
+
+Give a target an **SSH user** and pingmon treats it as *your server*. The quick
+way: just press `Enter` on any target — if it has no SSH user yet, a small dialog
+asks for the user and SSH port (default `22`), saves them on the target and
+connects. You can also set it ahead of time in the add/edit form (`a` / `E`) or
+as `ssh_user` in the config. Once a target is a server:
+
+- **Availability is honest.** Instead of trusting a bare TCP handshake, pingmon
+  reads the SSH banner. A server that only answers SYN/ACK at the network edge
+  (typical under a DDoS) but whose `sshd` can't respond reads **DOWN**, not a
+  false UP. For a server, the `port` field is the **SSH port** (usually `22`).
+- **`Enter` logs in.** A live SSH shell opens inside the left panel. If
+  `ssh-agent` holds a key the login is automatic; otherwise ssh prompts for the
+  password right there in the panel (nothing is stored, no `sshpass` needed).
+- **Load summary at a glance.** Select a server and the detail panel shows a
+  live **Server load** block — load average vs. core count (flagged
+  `overloaded`), the top processes by CPU and by memory, tasks stuck in disk
+  wait, root-filesystem usage and memory used. It answers *why* a box is busy
+  without logging in. (Needs ssh-agent or a key; refreshed every few seconds.)
+- **`l` opens a remote diagnostics menu.** A scrollable list (↑/↓, Enter) of
+  ready-made checks that run over SSH in the right panel:
+  - **htop / atop / top** — interactive process monitors.
+  - **Load average — why is it high** — `uptime`, `vmstat` (run-queue & iowait),
+    `free`, top processes by CPU and memory, `iostat` if present.
+  - **Logins & intrusion** — `w`, `last`, failed logins (`lastb`).
+  - **SSH auth log** — accepted and brute-force attempts, failed passwords by
+    source IP (`journalctl`/`auth.log`).
+  - **Connections & ports** — listening and established sockets (`ss`/`netstat`).
+  - **Kernel & system log** — `dmesg` and journal warnings.
+  - **Live network traffic** — `iftop`/`nethogs`/`nload` if installed, else live
+    interface counters.
+  - **Interface stats** and **Disk & I/O** — `ip -s link`, `df`, `lsblk`, biggest
+    directories.
+
+  Every entry sticks to tools shipped on almost every Linux and degrades
+  gracefully when a fancier one is missing. The choice is remembered per server.
+- **Getting around.** `← / →` move focus between the two panels **at any time —
+  even while a console is live**, so you can keep an SSH shell open on the left
+  and `htop` running on the right and hop between them. (Arrows switch panels and
+  aren't sent to the remote; `↑ / ↓` still go to it, so shell history and htop
+  navigation work.) Quit a remote tool with its own `q`; from a shell use
+  `logout` / `Ctrl-D`. `Ctrl-]` exits the focused console back to the dashboard.
+
+The embedded terminals are real VT terminals (rendered with `pyte`), so
+full-screen tools, colours and function keys work.
 
 ## Region Advisor
 
@@ -177,6 +232,15 @@ flag = "🇺🇸"
 host = "speedtest.newark.linode.com"
 port = 443
 source = "builtin"
+
+[[targets]]
+country = "My VPS"
+flag = "🏳"
+host = "203.0.113.10"
+port = 22              # SSH port — servers are probed by reading the SSH banner
+source = "user"
+ssh_user = "root"     # set this to make it a server: Enter logs in, l = htop/atop/top
+top_tool = "htop"     # remembered choice for l (optional)
 ```
 
 Add as many `[[targets]]` blocks as you like; any host or IP works, and the
@@ -193,15 +257,23 @@ connection handshake (SYN → SYN/ACK). That is close to true network RTT and,
 unlike ICMP, needs no elevated privileges and reflects whether the service port
 is actually answering. Failed or timed-out connects count as packet loss.
 
+**Servers** (targets with an `ssh_user`) go one step further: after connecting
+to the SSH port they wait for the SSH banner and time the round-trip to the
+*first byte the server sends*. A handshake that completes but never produces a
+banner — a dead `sshd`, or a scrubbing layer answering on the server's behalf —
+is counted as a failure, so availability reflects whether you can really reach
+the box, not just its network edge.
+
 ## Project layout
 
 ```
 pingmon/
-  app.py      # Textual app: table, detail panel, graphs, advisor, alerts, actions
-  pinger.py   # async TCP ping + DNS resolve
+  app.py      # Textual app: table, detail panel, graphs, advisor, alerts, SSH actions
+  pinger.py   # async TCP ping (connect + SSH-banner probe) + DNS resolve
   stats.py    # rolling per-target stats (latency, jitter, loss, MOS, status)
   scoring.py  # Region Advisor: composite score + use-case profiles
-  netutil.py  # async traceroute + OS desktop notifications
+  netutil.py  # async traceroute, GeoIP, desktop notify, SSH helpers
+  terminal.py # embedded live terminal widget (pty + pyte) for SSH / top panels
   render.py   # colours, status meta, text sparklines
   config.py   # TOML load/save + built-in per-country target set
   app.tcss    # dark theme / layout

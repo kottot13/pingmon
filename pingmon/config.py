@@ -49,10 +49,21 @@ class Target:
     host: str
     port: int = 443
     source: str = "builtin"  # "builtin" = shipped default, "user" = added/edited
+    ssh_user: str = ""       # non-empty marks this target as "my server"
+    top_tool: str = ""       # remembered remote viewer: htop | atop | top
 
     @property
     def key(self) -> str:
         return f"{self.host}:{self.port}"
+
+    @property
+    def server(self) -> bool:
+        """A target you can log in to: probed via SSH banner, Enter/l enabled.
+
+        For a server, ``port`` is the SSH port (default 22) and availability is
+        measured by reading the SSH banner, not just completing the TCP connect.
+        """
+        return bool(self.ssh_user)
 
     @property
     def code(self) -> str:
@@ -124,6 +135,8 @@ def load_config() -> Config:
             port=int(t.get("port", 443)),
             # honour an explicit source; otherwise infer from the built-in set
             source=t.get("source") or ("builtin" if t["host"] in default_hosts else "user"),
+            ssh_user=str(t.get("ssh_user", "")),
+            top_tool=str(t.get("top_tool", "")),
         )
         for t in data.get("targets", [])
     ]
@@ -175,6 +188,11 @@ def save_config(cfg: Config) -> None:
         lines.append(f'host = "{_toml_escape(t.host)}"')
         lines.append(f"port = {t.port}")
         lines.append(f'source = "{_toml_escape(t.source)}"')
+        # SSH fields only written when set, to keep plain-monitor targets tidy.
+        if t.ssh_user:
+            lines.append(f'ssh_user = "{_toml_escape(t.ssh_user)}"')
+        if t.top_tool:
+            lines.append(f'top_tool = "{_toml_escape(t.top_tool)}"')
         lines.append("")
 
     # Write atomically: a crash or full disk mid-write can't truncate the existing

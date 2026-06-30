@@ -22,9 +22,30 @@ Screen {
     border-right: tall #2a2a3a;
 }
 
+#left.-focused {
+    border-right: tall #7aa2f7;
+}
+
 #table {
     height: 1fr;
     background: #14141c;
+}
+
+/* Embedded live terminals (SSH shell / remote top). Hidden until launched. */
+#left-term, #right-term {
+    height: 1fr;
+    width: 1fr;
+    background: #0d0d14;
+}
+
+/* One-line legend shown under a live console so the exit key is discoverable. */
+.term-hint {
+    display: none;
+    height: 1;
+    padding: 0 1;
+    background: #2a2a3a;
+    color: #d0d0e0;
+    text-style: bold;
 }
 
 DataTable > .datatable--header {
@@ -43,6 +64,16 @@ DataTable > .datatable--hover {
 
 #detail {
     width: 54;
+    background: #16161f;
+    border-left: tall #14141c;
+}
+
+#detail.-focused {
+    border-left: tall #7aa2f7;
+}
+
+#detail-scroll {
+    height: 1fr;
     padding: 1 2;
     background: #16161f;
 }
@@ -55,6 +86,10 @@ DataTable > .datatable--hover {
 #detail-meta {
     margin-bottom: 1;
     color: #9a9ab0;
+}
+
+#detail-load {
+    margin-bottom: 1;
 }
 
 .detail-h {
@@ -172,4 +207,83 @@ TracerouteScreen {
 
 #trace-foot {
     margin-top: 1;
+}
+
+/* SSH login setup modal */
+SshSetupScreen {
+    align: center middle;
+}
+
+#ssh-dialog {
+    width: 60;
+    height: auto;
+    padding: 1 2;
+    background: #1c1c28;
+    border: thick #3ddc84;
+}
+
+#ssh-title {
+    text-style: bold;
+    color: #3ddc84;
+    margin-bottom: 1;
+}
+
+#ssh-dialog Input {
+    margin-bottom: 1;
+}
+
+#ssh-hint {
+    color: #6a6a7c;
+    margin-bottom: 1;
+}
+
+#ssh-buttons {
+    height: auto;
+    align: right middle;
+}
+
+#ssh-buttons Button {
+    margin-left: 2;
+}
+
+/* Remote diagnostics menu modal */
+DiagnosticsScreen {
+    align: center middle;
+}
+
+#diag-dialog {
+    width: 64;
+    height: auto;
+    padding: 1 2;
+    background: #1c1c28;
+    border: thick #c9a0dc;
+}
+
+#diag-title {
+    text-style: bold;
+    color: #c9a0dc;
+    margin-bottom: 1;
+}
+
+#diag-hint {
+    color: #6a6a7c;
+    margin-bottom: 1;
+}
+
+#diag-list {
+    height: auto;
+    max-height: 14;
+    background: #1c1c28;
+    border: none;
+    padding: 0;
+}
+
+#diag-list > .option-list--option {
+    padding: 0 1;
+}
+
+#diag-list > .option-list--option-highlighted {
+    background: #3ddc84;
+    color: #0d0d14;
+    text-style: bold;
 }

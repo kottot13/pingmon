@@ -7,15 +7,18 @@ Project guidance for Claude Code working on **pingmon** (PyPI package
 
 A Textual TUI that TCP-pings reachable hosts per country and shows a live,
 colour-coded latency / availability dashboard: sortable table, detail panel with
-graphs and MOS, Region Advisor, threshold alerts, and a traceroute drill-down.
-Pure Python (3.11+), single runtime dependency `textual`. Layout:
+graphs and MOS, Region Advisor, threshold alerts, a traceroute drill-down, and
+SSH actions for your own servers (embedded login shell + remote htop/atop/top).
+Pure Python (3.11+), two runtime dependencies: `textual` and `pyte` (`pyte`
+backs the embedded terminals). Layout:
 
 ```
 pingmon/
-  app.py      # Textual app: table, detail panel, advisor, alerts, traceroute, CLI main()
-  config.py   # TOML load/save; Target (with .code badge); deterministic config_path()
-  netutil.py  # async traceroute, GeoIP, flag_emoji / iso_from_flag, desktop notify
-  pinger.py   # TCP-connect timing
+  app.py      # Textual app: table, detail panel (+live Server load), advisor, alerts, traceroute, SSH, diagnostics menu, CLI main()
+  config.py   # TOML load/save; Target (.code badge, .server/ssh_user/top_tool); deterministic config_path()
+  netutil.py  # traceroute (TCP-to-port), GeoIP, flags, desktop notify, ssh helpers, fetch_server_load
+  pinger.py   # TCP-connect timing + tcp_ping_banner (SSH-banner liveness)
+  terminal.py # TerminalPane: embedded live terminal (pty + pyte) reused by both panels
   render.py   # colours, sparklines, charts, country_label()
   scoring.py  # Region Advisor scoring + profiles
   stats.py    # rolling per-target stats (latency, jitter, loss, MOS)
@@ -34,6 +37,53 @@ tools/screenshots.py  # headless regen of docs/*.svg
   `$PINGMON_CONFIG` → `$XDG_CONFIG_HOME/pingmon/config.toml`. Never make it depend
   on the current working directory — that silently loses user-added targets.
   `save_config()` writes atomically (temp + `os.replace`).
+- **Servers vs plain targets.** A target with a non-empty `ssh_user` is a
+  *server* (`Target.server`): for it, `port` is the SSH port and availability is
+  measured by `tcp_ping_banner` (connect + read the SSH banner) so a DDoSed box
+  that only completes the TCP handshake reads DOWN, not a false UP. The reported
+  latency is the *connect* RTT, not time-to-banner (sshd can delay the banner via
+  reverse DNS / GSSAPI, which would otherwise look like huge latency). Plain targets
+  keep `tcp_ping` (connect-only) — do not switch them to the banner probe, since
+  HTTP(S) hosts send nothing unprompted and would read DOWN.
+- **Embedded terminals.** `terminal.py` runs ssh/htop in a real pty and renders
+  it via `pyte` (cursor drawn as a reverse cell; arrows honour DECCKM). One
+  `TerminalPane` lives in each panel (`#left-term` shell, `#right-term` top).
+  **Both panes can be live at once** (SSH left + top right). A focused live pane
+  forwards every key to the remote **except `←/→`**, which it lets bubble so the
+  app switches panels mid-session (`↑/↓` still reach the remote — htop/shell
+  history work). Hence `action_focus_left/right` have no "is a pane live" guard
+  and `_update_focus` focuses the live console on the chosen side; the per-side
+  launch guards live in `action_login`/`action_top`. The guaranteed way out is
+  `Ctrl-]`, a **priority** app binding (`action_detach`, exits the focused
+  panel's console) so it fires even though the pane swallows other keys — a
+  `.term-hint` bar advertises it. On the dashboard, `←/→` bubble past
+  `NavDataTable`/`NavScroll` (their `cursor_left/right` / `scroll_left/right`
+  disabled via `check_action`). `_start_terminal` runs via `_run_terminal`,
+  which surfaces a spawn failure as a notification instead of crashing.
+- **Promote-on-login.** `Enter`/`l` on a target that isn't a server yet opens
+  `SshSetupScreen` (asks SSH user + port, default 22), which calls
+  `_promote_to_server` — saves `ssh_user`/`port`, re-keys the row and restarts
+  the probe on the SSH port — then proceeds. So any target is loggable without a
+  separate edit step; don't reintroduce a hard "not a server" refusal.
+- **Diagnostics menu (`l`).** `DIAG_MENU` is the single source of truth: a list
+  of `{key,label,tui,cmd}` entries rendered by `DiagnosticsScreen` (an
+  `OptionList`). `tui` entries exec a full-screen program; the rest are one-shot
+  reports `_diag_command` wraps in `( … ) 2>&1 | less -R`. Every `cmd` must use
+  near-universal tools (coreutils/util-linux/procps/iproute2/systemd) and fall
+  back gracefully (`command -v x && … || …`) — servers are mostly minimal Linux.
+- **Live Server load.** For a selected server, `_refresh_selected_load` polls
+  `fetch_server_load` (SSH `BatchMode=yes`, key/agent only) every ~8s and
+  `_server_load_block` renders load-vs-cores, top CPU/MEM procs, disk-wait, fs &
+  mem into `#detail-load`. Only the selected server is polled; no agent → a hint,
+  not an error. Keep the remote snapshot command (`netutil._LOAD_CMD`) portable.
+- **traceroute is platform-aware.** macOS uses TCP probes to the open port
+  (setuid root, no sudo); Linux uses TCP only when run as root, else unprivileged
+  UDP; the port comes from the target. Don't make Linux default to TCP/ICMP — it
+  needs privilege there.
+- **Key map:** `Enter` SSH login (left panel), `l` remote diagnostics menu (right
+  panel), `t` traceroute, `Shift+←/→` switch panel focus, `Ctrl-]` exit a console
+  (priority binding), `q` quit (only when no console is focused). Keep these in
+  sync with the README and the detail-panel hint text.
 
 ## Release workflow — do ALL of this after any user-facing change
 
