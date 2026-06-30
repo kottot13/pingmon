@@ -240,10 +240,10 @@ source = "builtin"
 [[targets]]
 country = "My VPS"
 flag = "🏳"
-host = "203.0.113.10"
+host = "203.0.113.10"  # your server's IP or hostname (this is a documentation IP)
 port = 22              # SSH port — servers are probed by reading the SSH banner
 source = "user"
-ssh_user = "root"     # set this to make it a server: Enter logs in, l = htop/atop/top
+ssh_user = "root"     # set this to make it a server: Enter logs in, l = tools
 top_tool = "htop"     # remembered choice for l (optional)
 ```
 

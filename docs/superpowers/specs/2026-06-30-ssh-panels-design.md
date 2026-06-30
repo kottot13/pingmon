@@ -11,7 +11,7 @@ Three connected gaps in the current TUI:
 1. **False "available".** `pinger.tcp_ping` only completes a TCP connect
    (SYN → SYN/ACK → ACK). A server under a DDoS still returns SYN/ACK at the
    network edge, so pingmon reports it UP even though the real service (SSH) is
-   dead and the user cannot log in. Example reported host: `203.0.113.10`.
+   dead and the user cannot log in (a user's own VPS).
 2. **No way to act on a target.** The user wants to log in to their own server
    straight from the dashboard.
 3. **No remote system view.** The user wants a live `htop`/`atop`/`top` for the
