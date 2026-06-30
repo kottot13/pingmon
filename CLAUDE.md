@@ -65,12 +65,19 @@ tools/screenshots.py  # headless regen of docs/*.svg
   `_promote_to_server` — saves `ssh_user`/`port`, re-keys the row and restarts
   the probe on the SSH port — then proceeds. So any target is loggable without a
   separate edit step; don't reintroduce a hard "not a server" refusal.
-- **Diagnostics menu (`l`).** `DIAG_MENU` is the single source of truth: a list
-  of `{key,label,tui,cmd}` entries rendered by `DiagnosticsScreen` (an
-  `OptionList`). `tui` entries exec a full-screen program; the rest are one-shot
-  reports `_diag_command` wraps in `( … ) 2>&1 | less -R`. Every `cmd` must use
-  near-universal tools (coreutils/util-linux/procps/iproute2/systemd) and fall
-  back gracefully (`command -v x && … || …`) — servers are mostly minimal Linux.
+- **Diagnostics menu (`l`).** `DIAG_MENU` holds the built-in `{key,label,tui,cmd}`
+  entries; `_diag_entries()` appends one `tool:<name>` entry per
+  `cfg.custom_tools` and a final `add_tool` action, and `DiagnosticsScreen`
+  (`OptionList`) renders the lot. `tui` entries exec a full-screen program; the
+  rest are one-shot reports `_diag_command` wraps in `( … ) 2>&1 | less -R`. Every
+  built-in `cmd` must use near-universal tools (coreutils/util-linux/procps/
+  iproute2/systemd) with graceful fallbacks — servers are mostly minimal Linux.
+  `add_tool` opens `CustomToolScreen` (type a tool + Install&run / Run only);
+  `_custom_tool_command` shell-quotes it and, when installing, picks the server's
+  package manager (apt/dnf/yum/apk/pacman/zypper, sudo). Added tools persist in
+  `cfg.custom_tools` so they stay in the menu; selecting a saved one re-installs
+  if missing. Don't hard-code htop/atop back in — that was deliberately replaced
+  by the user-driven tool list.
 - **Live Server load.** For a selected server, `_refresh_selected_load` polls
   `fetch_server_load` (SSH `BatchMode=yes`, key/agent only) every ~8s and
   `_server_load_block` renders load-vs-cores, top CPU/MEM procs, disk-wait, fs &

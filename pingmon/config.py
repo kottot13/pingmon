@@ -92,6 +92,7 @@ class Config:
     alert_window: int = DEFAULTS["alert_window"]
     desktop_notify: bool = DEFAULTS["desktop_notify"]
     targets: list[Target] = field(default_factory=list)
+    custom_tools: list[str] = field(default_factory=list)  # user tools added via the `l` menu
     path: Path | None = None
 
 
@@ -143,6 +144,8 @@ def load_config() -> Config:
     if not targets:
         targets = [Target(**t) for t in DEFAULT_TARGETS]
 
+    custom_tools = [str(t) for t in data.get("custom_tools", []) if str(t).strip()]
+
     return Config(
         interval=float(data.get("interval", DEFAULTS["interval"])),
         timeout=float(data.get("timeout", DEFAULTS["timeout"])),
@@ -152,6 +155,7 @@ def load_config() -> Config:
         alert_window=int(data.get("alert_window", DEFAULTS["alert_window"])),
         desktop_notify=bool(data.get("desktop_notify", DEFAULTS["desktop_notify"])),
         targets=targets,
+        custom_tools=custom_tools,
         path=path,
     )
 
@@ -179,6 +183,9 @@ def save_config(cfg: Config) -> None:
         f"alert_loss = {cfg.alert_loss}",
         f"alert_window = {cfg.alert_window}",
         f"desktop_notify = {'true' if cfg.desktop_notify else 'false'}",
+        "",
+        "# Tools you added via the in-app `l` menu; auto-installed on a server if missing.",
+        "custom_tools = [" + ", ".join(f'"{_toml_escape(t)}"' for t in cfg.custom_tools) + "]",
         "",
     ]
     for t in cfg.targets:

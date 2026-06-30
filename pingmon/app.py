@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 from dataclasses import replace
 from datetime import datetime
 from time import monotonic
@@ -59,10 +60,6 @@ from .terminal import TerminalPane
 # procps / iproute2 / systemd) and degrades gracefully when a nicer tool is
 # missing — important because servers are mostly Linux of varying minimalism.
 DIAG_MENU = [
-    {"key": "htop", "label": "htop — interactive processes", "tui": True,
-     "cmd": "command -v htop >/dev/null 2>&1 && exec htop; exec top"},
-    {"key": "atop", "label": "atop — processes + resource history", "tui": True,
-     "cmd": "command -v atop >/dev/null 2>&1 && exec atop; exec top"},
     {"key": "top", "label": "top — interactive processes (always present)", "tui": True,
      "cmd": "exec top"},
     {"key": "load", "label": "Load average — why is it high (CPU/IO/top procs)", "tui": False,
@@ -466,13 +463,15 @@ class TracerouteScreen(ModalScreen):
 
 
 class DiagnosticsScreen(ModalScreen[str | None]):
-    """Scrollable menu of remote diagnostics; returns the chosen DIAG_MENU key."""
+    """Scrollable menu of remote diagnostics; returns the chosen entry's key."""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self, default: str = "htop") -> None:
+    def __init__(self, entries: list[dict], default: str = "") -> None:
         super().__init__()
-        self.default = default if default in DIAG_KEYS else "htop"
+        self.entries = entries
+        self.keys = [e["key"] for e in entries]
+        self.default = default if default in self.keys else self.keys[0]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="diag-dialog"):
@@ -481,11 +480,11 @@ class DiagnosticsScreen(ModalScreen[str | None]):
                 "↑/↓ choose · Enter runs · exit later with q (or Ctrl-])",
                 id="diag-hint",
             )
-            yield OptionList(*[e["label"] for e in DIAG_MENU], id="diag-list")
+            yield OptionList(*[e["label"] for e in self.entries], id="diag-list")
 
     def on_mount(self) -> None:
         ol = self.query_one("#diag-list", OptionList)
-        ol.highlighted = DIAG_KEYS.index(self.default)
+        ol.highlighted = self.keys.index(self.default)
         ol.focus()
 
     def action_cancel(self) -> None:
@@ -493,7 +492,54 @@ class DiagnosticsScreen(ModalScreen[str | None]):
 
     @on(OptionList.OptionSelected)
     def _pick(self, event: OptionList.OptionSelected) -> None:
-        self.dismiss(DIAG_MENU[event.option_index]["key"])
+        self.dismiss(self.keys[event.option_index])
+
+
+class CustomToolScreen(ModalScreen[tuple[str, bool] | None]):
+    """Ask for a tool to run on the server and whether to install it if missing."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="custom-dialog"):
+            yield Label("Run a tool on the server", id="custom-title")
+            yield Input(placeholder="Tool name (e.g. htop, btop, iotop, ncdu, glances)", id="in-tool")
+            yield Label(
+                "‘Install & run’ installs it first if missing (sudo may be asked "
+                "in the console). Added tools stay in this menu.",
+                id="custom-hint",
+            )
+            with Horizontal(id="custom-buttons"):
+                yield Button("Install & run", variant="success", id="c-install")
+                yield Button("Run only", variant="default", id="c-run")
+                yield Button("Cancel", variant="default", id="c-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#in-tool", Input).focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#c-cancel")
+    def _cancel(self) -> None:
+        self.dismiss(None)
+
+    @on(Input.Submitted)
+    @on(Button.Pressed, "#c-install")
+    def _install(self) -> None:
+        self._done(True)
+
+    @on(Button.Pressed, "#c-run")
+    def _run(self) -> None:
+        self._done(False)
+
+    def _done(self, install: bool) -> None:
+        raw = self.query_one("#in-tool", Input).value.strip()
+        tool = raw.split()[0] if raw else ""
+        if not tool:
+            self.query_one("#in-tool", Input).focus()
+            return
+        self.dismiss((tool, install))
 
 
 class SshSetupScreen(ModalScreen[tuple[str, int] | None]):
@@ -516,7 +562,7 @@ class SshSetupScreen(ModalScreen[tuple[str, int] | None]):
                         value=str(self.default_port))
             yield Label(
                 "Saved on the target so it becomes your server: availability is "
-                "then checked over SSH, and l opens server tools (htop, load, logins…).",
+                "then checked over SSH, and l opens server tools (top, load, logins, your own…).",
                 id="ssh-hint",
             )
             with Horizontal(id="ssh-buttons"):
@@ -1312,8 +1358,13 @@ class PingMonApp(App):
             return
 
         def choose() -> None:
+            entries = self._diag_entries()
+
             def handle(key: str | None) -> None:
                 if key is None:
+                    return
+                if key == "add_tool":
+                    self._add_custom_tool(mon)
                     return
                 t = mon.target
                 t.top_tool = key
@@ -1323,17 +1374,72 @@ class PingMonApp(App):
                 argv = build_ssh_argv(t.ssh_user, t.host, t.port, remote_cmd=remote)
                 self._start_terminal("right", argv, mon=mon, retry=self.action_top)
 
-            self.push_screen(DiagnosticsScreen(mon.target.top_tool or "htop"), handle)
+            self.push_screen(
+                DiagnosticsScreen(entries, mon.target.top_tool or entries[0]["key"]),
+                handle,
+            )
 
         self._ensure_server(mon, choose)
 
-    @staticmethod
-    def _diag_command(key: str) -> str:
-        """Remote shell command for a DIAG_MENU key (reports get paged through less)."""
+    def _diag_entries(self) -> list[dict]:
+        """Built-in diagnostics + the user's saved tools + the 'add a tool' action."""
+        entries = list(DIAG_MENU)
+        for tool in self.cfg.custom_tools:
+            entries.append({"key": f"tool:{tool}", "label": f"{tool} — your tool", "tui": True})
+        entries.append({
+            "key": "add_tool",
+            "label": "＋ Run a tool… — add one (installs on the server if missing)",
+            "tui": True,
+        })
+        return entries
+
+    def _add_custom_tool(self, mon: Monitor) -> None:
+        def handle(result: tuple[str, bool] | None) -> None:
+            if result is None:
+                return
+            tool, install = result
+            if tool not in self.cfg.custom_tools:
+                self.cfg.custom_tools.append(tool)
+            mon.target.top_tool = f"tool:{tool}"
+            self.cfg.targets = [m.target for m in self.monitors]
+            save_config(self.cfg)  # the tool now shows up in the menu next time
+            t = mon.target
+            remote = self._custom_tool_command(tool, install)
+            argv = build_ssh_argv(t.ssh_user, t.host, t.port, remote_cmd=remote)
+            self._start_terminal("right", argv, mon=mon, retry=self.action_top)
+
+        self.push_screen(CustomToolScreen(), handle)
+
+    def _diag_command(self, key: str) -> str:
+        """Remote shell command for a menu key (reports get paged through less)."""
+        if key.startswith("tool:"):
+            # a saved tool: run it, installing it first if it's not there
+            return self._custom_tool_command(key[len("tool:"):], install=True)
         entry = next((e for e in DIAG_MENU if e["key"] == key), DIAG_MENU[0])
         if entry["tui"]:
             return entry["cmd"]
         return f"( {entry['cmd']} ) 2>&1 | less -R"
+
+    @staticmethod
+    def _custom_tool_command(tool: str, install: bool) -> str:
+        """Run `tool`; when install=True, install it via the server's package manager first."""
+        q = shlex.quote(tool)
+        if not install:
+            return f"exec {q}"
+        return (
+            f"T={q}; "
+            'if ! command -v "$T" >/dev/null 2>&1; then '
+            'echo "Installing $T ..."; '
+            'if command -v apt-get >/dev/null 2>&1; then sudo apt-get update -qq && sudo apt-get install -y "$T"; '
+            'elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y "$T"; '
+            'elif command -v yum >/dev/null 2>&1; then sudo yum install -y "$T"; '
+            'elif command -v apk >/dev/null 2>&1; then sudo apk add "$T"; '
+            'elif command -v pacman >/dev/null 2>&1; then sudo pacman -S --noconfirm "$T"; '
+            'elif command -v zypper >/dev/null 2>&1; then sudo zypper install -y "$T"; '
+            "else echo 'No supported package manager found.'; sleep 3; fi; "
+            'fi; '
+            'command -v "$T" >/dev/null 2>&1 && exec "$T" || { echo "$T is not available."; sleep 3; }'
+        )
 
     _TERM_HINT = "Ctrl-]  EXIT to pingmon   ·   Shift+←/→ switch panel   ·   q exits the tool   ·   type the SSH password if asked"
 

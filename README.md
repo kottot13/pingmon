@@ -97,7 +97,7 @@ CLI flags (`-V/--version`, `-c/--config PATH`).
 | `↑ / ↓`, `j/k` | Move selection (or scroll the focused panel) |
 | `← / →`        | Switch focus between the left (table) and right (detail) panel |
 | `Enter`        | SSH login to the selected server, live in the left panel (asks for user/port the first time) |
-| `l`            | Remote diagnostics menu (htop/top, load causes, logins, SSH log, connections, kernel log, traffic, disk), live in the right panel |
+| `l`            | Remote diagnostics menu (top, load causes, logins, SSH log, connections, kernel log, traffic, disk — plus your own tools), live in the right panel |
 | `t`            | Traceroute drill-down for the selected target |
 | `Ctrl-]`       | Exit a live SSH / top console back to the dashboard — always works, even mid-session (a hint bar under the console reminds you). htop/atop/top also quit on their own `q` |
 | `g`            | Open the Region Advisor (`[` `]` / `p` switch profile inside) |
@@ -136,7 +136,11 @@ as `ssh_user` in the config. Once a target is a server:
   without logging in. (Needs ssh-agent or a key; refreshed every few seconds.)
 - **`l` opens a remote diagnostics menu.** A scrollable list (↑/↓, Enter) of
   ready-made checks that run over SSH in the right panel:
-  - **htop / atop / top** — interactive process monitors.
+  - **top** — the always-present process monitor. Want `htop`, `btop`, `iotop`,
+    `ncdu`, `glances`…? Use **＋ Run a tool…** at the bottom: type its name and
+    pick **Install & run** — if it's missing pingmon installs it via the server's
+    package manager first (`apt`/`dnf`/`yum`/`apk`/`pacman`/`zypper`; sudo is
+    asked in the console). Tools you add **stay in the menu** for next time.
   - **Load average — why is it high** — `uptime`, `vmstat` (run-queue & iowait),
     `free`, top processes by CPU and memory, `iostat` if present.
   - **Logins & intrusion** — `w`, `last`, failed logins (`lastb`).

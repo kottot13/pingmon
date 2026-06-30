@@ -246,6 +246,44 @@ SshSetupScreen {
     margin-left: 2;
 }
 
+/* Custom tool input modal */
+CustomToolScreen {
+    align: center middle;
+}
+
+#custom-dialog {
+    width: 64;
+    height: auto;
+    padding: 1 2;
+    background: #1c1c28;
+    border: thick #3ddc84;
+}
+
+#custom-title {
+    text-style: bold;
+    color: #3ddc84;
+    margin-bottom: 1;
+}
+
+#custom-dialog Input {
+    margin-bottom: 1;
+}
+
+#custom-hint {
+    width: 1fr;
+    color: #6a6a7c;
+    margin-bottom: 1;
+}
+
+#custom-buttons {
+    height: auto;
+    align: right middle;
+}
+
+#custom-buttons Button {
+    margin-left: 2;
+}
+
 /* Remote diagnostics menu modal */
 DiagnosticsScreen {
     align: center middle;
